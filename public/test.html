@@ -1,0 +1,12 @@
+<!doctype html><meta charset="utf-8"><title>TEST</title>
+<h1>Button Test</h1>
+<button id="a">Connect</button>
+<button id="b">Info</button>
+<button id="c">Mint</button>
+<pre id="log">loaded</pre>
+<script>
+const log = m=>document.getElementById('log').textContent = String(m);
+document.getElementById('a').onclick = ()=>log('connect clicked');
+document.getElementById('b').onclick = ()=>log('info clicked');
+document.getElementById('c').onclick = ()=>log('mint clicked');
+</script>
