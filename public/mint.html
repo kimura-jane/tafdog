@@ -8,10 +8,9 @@
 <pre id="out"></pre>
 
 <script type="module">
-import { createWalletClient, createPublicClient, custom, parseAbi, formatEther } from 'https://esm.sh/viem@2?bundle';
+import { createWalletClient, createPublicClient, custom, parseAbi, formatEther, http } from 'https://esm.sh/viem@2?bundle';
 import { polygon } from 'https://esm.sh/viem/chains?bundle';
 
-// 置換不要（指定済み）
 const NFT = '0xd0163c60bd67bbf0e3c1bdabae50277dffb5583b';
 const SEADROP = '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5';
 const FEE_RECIPIENT = '0x8242dae5c6ff90b03d15c54cad95c3ed97ac0571';
@@ -21,32 +20,40 @@ const NFT_ABI = parseAbi([
   'function symbol() view returns (string)',
   'function totalSupply() view returns (uint256)'
 ]);
-
 const SD_ABI = parseAbi([
   'function getPublicDrop(address nft) view returns (tuple(uint80 mintPrice,uint48 startTime,uint48 endTime,uint16 maxTotalMintableByWallet,uint16 feeBps,bool restrictFeeRecipients))',
   'function mintPublic(address nft,address feeRecipient,uint256 quantity) payable'
 ]);
 
 const out = m => document.getElementById('out').textContent = String(m ?? '');
-const transport = custom(window.ethereum);
-const pub = createPublicClient({ chain: polygon, transport });
-const wal = createWalletClient({ chain: polygon, transport });
+
+function getPublic(){
+  try{
+    if (window.ethereum) return createPublicClient({ chain: polygon, transport: custom(window.ethereum) });
+  }catch{}
+  return createPublicClient({ chain: polygon, transport: http('https://polygon-rpc.com') });
+}
+function getWallet(){
+  if (!window.ethereum) return null;
+  return createWalletClient({ chain: polygon, transport: custom(window.ethereum) });
+}
 
 let account;
-
 async function ensurePolygon(){
+  if (!window.ethereum) return;
   const id = await window.ethereum.request({ method:'eth_chainId' });
   if (id !== '0x89')
     await window.ethereum.request({ method:'wallet_switchEthereumChain', params:[{ chainId:'0x89' }]});
 }
 
-document.getElementById('connect').onclick = async () => {
-  if(!window.ethereum){ out('MetaMask未検出'); return; }
+document.getElementById('connect').addEventListener('click', async ()=>{
+  if (!window.ethereum){ out('MetaMask未検出'); return; }
   [account] = await window.ethereum.request({ method:'eth_requestAccounts' });
   out('connected: ' + account);
-};
+});
 
-document.getElementById('info').onclick = async () => {
+document.getElementById('info').addEventListener('click', async ()=>{
+  const pub = getPublic();
   try{
     await ensurePolygon();
     const [name, symbol, total] = await Promise.all([
@@ -54,49 +61,37 @@ document.getElementById('info').onclick = async () => {
       pub.readContract({ address: NFT, abi: NFT_ABI, functionName:'symbol' }),
       pub.readContract({ address: NFT, abi: NFT_ABI, functionName:'totalSupply' }).catch(()=>null),
     ]);
-    let priceWei = 0n, start=0n, end=0n, maxPerWallet=0n, feeBps=0n, restrict=false;
+    let priceWei = 0n;
     try{
-      const drop = await pub.readContract({ address: SEADROP, abi: SD_ABI, functionName:'getPublicDrop', args:[NFT] });
-      priceWei = BigInt(drop.mintPrice ?? 0);
-      start = BigInt(drop.startTime ?? 0);
-      end = BigInt(drop.endTime ?? 0);
-      maxPerWallet = BigInt(drop.maxTotalMintableByWallet ?? 0);
-      feeBps = BigInt(drop.feeBps ?? 0);
-      restrict = Boolean(drop.restrictFeeRecipients);
+      const d = await pub.readContract({ address: SEADROP, abi: SD_ABI, functionName:'getPublicDrop', args:[NFT] });
+      priceWei = BigInt(d.mintPrice ?? 0);
     }catch{}
-    out(`name: ${name}
-symbol: ${symbol}
-totalSupply: ${total ?? 'unknown'}
-price: ${priceWei} wei (${formatEther(priceWei)} MATIC)
-start: ${start}  end: ${end}
-max/wallet: ${maxPerWallet}  feeBps: ${feeBps}  restrictFeeRecipients: ${restrict}`);
+    out(`name: ${name}\nsymbol: ${symbol}\ntotalSupply: ${total ?? 'unknown'}\nprice: ${priceWei} wei (${formatEther(priceWei)} MATIC)`);
   }catch(e){ out('読取失敗: ' + (e?.message || e)); }
-};
+});
 
-document.getElementById('mint').onclick = async () => {
+document.getElementById('mint').addEventListener('click', async ()=>{
+  if (!window.ethereum){ out('MetaMask未検出'); return; }
+  const pub = getPublic();
+  const wal = getWallet();
   try{
     await ensurePolygon();
-    if(!account) [account] = await window.ethereum.request({ method:'eth_requestAccounts' });
+    if (!account) [account] = await window.ethereum.request({ method:'eth_requestAccounts' });
     const qty = BigInt(Math.max(1, Number(document.getElementById('q').value|0)));
 
-    // 価格取得（取得失敗時は0）
     let unit = 0n;
     try{
-      const drop = await pub.readContract({ address: SEADROP, abi: SD_ABI, functionName:'getPublicDrop', args:[NFT] });
-      unit = BigInt(drop.mintPrice ?? 0);
+      const d = await pub.readContract({ address: SEADROP, abi: SD_ABI, functionName:'getPublicDrop', args:[NFT] });
+      unit = BigInt(d.mintPrice ?? 0);
     }catch{}
     const value = unit * qty;
 
     const { request } = await pub.simulateContract({
-      address: SEADROP,
-      abi: SD_ABI,
-      functionName: 'mintPublic',
-      args: [NFT, FEE_RECIPIENT, qty],
-      value,
-      account
+      address: SEADROP, abi: SD_ABI, functionName:'mintPublic',
+      args:[NFT, FEE_RECIPIENT, qty], value, account
     });
     const tx = await wal.writeContract(request);
     out('tx: ' + tx);
   }catch(e){ out('error: ' + (e?.message || e)); }
-};
+});
 </script>
