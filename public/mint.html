@@ -1,35 +1,36 @@
 <!doctype html><meta charset="utf-8"><title>TAF DOG Mint</title>
-<h1>TAF DOG</h1>
+<h1>TAF DOG Mint</h1>
 <p><a href="/">← 戻る</a></p>
 <label>数量 <input id="q" type="number" value="1" min="1" max="5"></label>
 <button id="connect">Connect</button>
-<button id="probe">コントラクト確認</button>
+<button id="info">コントラクト確認</button>
 <button id="mint">Mint</button>
 <pre id="out"></pre>
 
 <script type="module">
-import { createWalletClient, createPublicClient, custom, parseAbi } from 'https://esm.sh/viem@2?bundle';
+import { createWalletClient, createPublicClient, custom, parseAbi, formatEther } from 'https://esm.sh/viem@2?bundle';
 import { polygon } from 'https://esm.sh/viem/chains?bundle';
 
-const CONTRACT = '0xd0163c60bd67bbf0e3c1bdabae50277dffb5583b';
-const ABI = parseAbi([
+// 置換不要（指定済み）
+const NFT = '0xd0163c60bd67bbf0e3c1bdabae50277dffb5583b';
+const SEADROP = '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5';
+const FEE_RECIPIENT = '0x8242dae5c6ff90b03d15c54cad95c3ed97ac0571';
+
+const NFT_ABI = parseAbi([
   'function name() view returns (string)',
   'function symbol() view returns (string)',
-  'function totalSupply() view returns (uint256)',
-  'function price() view returns (uint256)',
-  'function mintPrice() view returns (uint256)',
-  'function publicPrice() view returns (uint256)',
-  'function cost() view returns (uint256)',
-  'function mint(uint256 quantity) payable',
-  'function publicMint(uint256 quantity) payable',
-  'function purchase(uint256 quantity) payable',
-  'function mint() payable'
+  'function totalSupply() view returns (uint256)'
 ]);
 
-const out = (m)=>document.getElementById('out').textContent = String(m ?? '');
+const SD_ABI = parseAbi([
+  'function getPublicDrop(address nft) view returns (tuple(uint80 mintPrice,uint48 startTime,uint48 endTime,uint16 maxTotalMintableByWallet,uint16 feeBps,bool restrictFeeRecipients))',
+  'function mintPublic(address nft,address feeRecipient,uint256 quantity) payable'
+]);
+
+const out = m => document.getElementById('out').textContent = String(m ?? '');
 const transport = custom(window.ethereum);
-const publicClient = createPublicClient({ chain: polygon, transport });
-const walletClient  = createWalletClient({ chain: polygon, transport });
+const pub = createPublicClient({ chain: polygon, transport });
+const wal = createWalletClient({ chain: polygon, transport });
 
 let account;
 
@@ -45,49 +46,57 @@ document.getElementById('connect').onclick = async () => {
   out('connected: ' + account);
 };
 
-document.getElementById('probe').onclick = async () => {
+document.getElementById('info').onclick = async () => {
   try{
     await ensurePolygon();
-    const name   = await publicClient.readContract({ address: CONTRACT, abi: ABI, functionName:'name' });
-    const symbol = await publicClient.readContract({ address: CONTRACT, abi: ABI, functionName:'symbol' });
-    const total  = await publicClient.readContract({ address: CONTRACT, abi: ABI, functionName:'totalSupply' }).catch(()=>null);
-    out(`name: ${name}\nsymbol: ${symbol}\ntotalSupply: ${total ?? 'unknown'}`);
+    const [name, symbol, total] = await Promise.all([
+      pub.readContract({ address: NFT, abi: NFT_ABI, functionName:'name' }),
+      pub.readContract({ address: NFT, abi: NFT_ABI, functionName:'symbol' }),
+      pub.readContract({ address: NFT, abi: NFT_ABI, functionName:'totalSupply' }).catch(()=>null),
+    ]);
+    let priceWei = 0n, start=0n, end=0n, maxPerWallet=0n, feeBps=0n, restrict=false;
+    try{
+      const drop = await pub.readContract({ address: SEADROP, abi: SD_ABI, functionName:'getPublicDrop', args:[NFT] });
+      priceWei = BigInt(drop.mintPrice ?? 0);
+      start = BigInt(drop.startTime ?? 0);
+      end = BigInt(drop.endTime ?? 0);
+      maxPerWallet = BigInt(drop.maxTotalMintableByWallet ?? 0);
+      feeBps = BigInt(drop.feeBps ?? 0);
+      restrict = Boolean(drop.restrictFeeRecipients);
+    }catch{}
+    out(`name: ${name}
+symbol: ${symbol}
+totalSupply: ${total ?? 'unknown'}
+price: ${priceWei} wei (${formatEther(priceWei)} MATIC)
+start: ${start}  end: ${end}
+max/wallet: ${maxPerWallet}  feeBps: ${feeBps}  restrictFeeRecipients: ${restrict}`);
   }catch(e){ out('読取失敗: ' + (e?.message || e)); }
 };
-
-async function getUnitPrice(){
-  for (const f of ['price','mintPrice','publicPrice','cost']){
-    try{ return BigInt(await publicClient.readContract({ address: CONTRACT, abi: ABI, functionName: f })); }
-    catch{}
-  }
-  return 0n;
-}
 
 document.getElementById('mint').onclick = async () => {
   try{
     await ensurePolygon();
     if(!account) [account] = await window.ethereum.request({ method:'eth_requestAccounts' });
     const qty = BigInt(Math.max(1, Number(document.getElementById('q').value|0)));
-    const value = (await getUnitPrice()) * qty;
 
-    const plans = [
-      { fn:'mint', args:[qty] },
-      { fn:'publicMint', args:[qty] },
-      { fn:'purchase', args:[qty] },
-      { fn:'mint', args:[] }
-    ];
+    // 価格取得（取得失敗時は0）
+    let unit = 0n;
+    try{
+      const drop = await pub.readContract({ address: SEADROP, abi: SD_ABI, functionName:'getPublicDrop', args:[NFT] });
+      unit = BigInt(drop.mintPrice ?? 0);
+    }catch{}
+    const value = unit * qty;
 
-    for(const p of plans){
-      try{
-        const { request } = await publicClient.simulateContract({
-          address: CONTRACT, abi: ABI, functionName: p.fn, args: p.args, value, account
-        });
-        const tx = await walletClient.writeContract(request);
-        out('tx: ' + tx);
-        return;
-      }catch{}
-    }
-    out('対応するミント関数なし（共有コントラクト等の可能性）');
+    const { request } = await pub.simulateContract({
+      address: SEADROP,
+      abi: SD_ABI,
+      functionName: 'mintPublic',
+      args: [NFT, FEE_RECIPIENT, qty],
+      value,
+      account
+    });
+    const tx = await wal.writeContract(request);
+    out('tx: ' + tx);
   }catch(e){ out('error: ' + (e?.message || e)); }
 };
 </script>
