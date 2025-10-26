@@ -1,7 +1,7 @@
 export interface Env { NONCE_KV: KVNamespace; AL_SALT: string; }
 const b64url = (buf: ArrayBuffer) => {
   let s=''; const a=new Uint8Array(buf); for (let i=0;i<a.length;i++) s+=String.fromCharCode(a[i]);
-  return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/, '');
+  return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 };
 export const onRequestPost: PagesFunction<Env> = async ({ env, request }) => {
   const { address } = await request.json<any>().catch(()=>({}));
