@@ -1,0 +1,91 @@
+<!doctype html><meta charset="utf-8"><title>TAF DOG Mint</title>
+<h1>TAF DOG Mint</h1>
+<p><a href="/">← 戻る</a></p>
+<label>数量 <input id="q" type="number" value="1" min="1" max="5"></label>
+<button id="connect">Connect</button>
+<button id="probe">コントラクト確認</button>
+<button id="mint">Mint</button>
+<pre id="out"></pre>
+
+<script type="module">
+import { createWalletClient, custom, parseAbi, readContract, simulateContract, writeContract } from 'https://esm.sh/viem@2?bundle';
+import { polygon } from 'https://esm.sh/viem/chains?bundle';
+
+const CONTRACT = '0xd0163c60bd67bbf0e3c1bdabae50277dffb5583b';
+
+const ABI = parseAbi([
+  // 基本情報
+  'function name() view returns (string)',
+  'function symbol() view returns (string)',
+  'function totalSupply() view returns (uint256)',
+  // 価格候補
+  'function price() view returns (uint256)',
+  'function mintPrice() view returns (uint256)',
+  'function publicPrice() view returns (uint256)',
+  'function cost() view returns (uint256)',
+  // ミント候補
+  'function mint(uint256 quantity) payable',
+  'function publicMint(uint256 quantity) payable',
+  'function purchase(uint256 quantity) payable',
+  'function mint() payable'
+]);
+
+const out = (m)=>document.getElementById('out').textContent = String(m ?? '');
+const ensurePolygon = async () => {
+  const id = await window.ethereum.request({ method:'eth_chainId' });
+  if (id !== '0x89') await window.ethereum.request({ method:'wallet_switchEthereumChain', params:[{ chainId:'0x89' }]});
+};
+const client = createWalletClient({ chain: polygon, transport: custom(window.ethereum) });
+
+document.getElementById('connect').onclick = async () => {
+  if(!window.ethereum){ out('MetaMask未検出'); return; }
+  await window.ethereum.request({ method:'eth_requestAccounts' });
+  out('connected');
+};
+
+document.getElementById('probe').onclick = async () => {
+  try{
+    await ensurePolygon();
+    const [name, symbol, total] = await Promise.all([
+      readContract({ address: CONTRACT, abi: ABI, functionName:'name' }),
+      readContract({ address: CONTRACT, abi: ABI, functionName:'symbol' }),
+      readContract({ address: CONTRACT, abi: ABI, functionName:'totalSupply' }).catch(()=>null),
+    ]);
+    out(`name: ${name}\nsymbol: ${symbol}\ntotalSupply: ${total ?? 'unknown'}\nOK`);
+  }catch(e){ out('読取失敗: ' + (e?.message || e)); }
+};
+
+async function getUnitPrice(){
+  const fns = ['price','mintPrice','publicPrice','cost'];
+  for (const f of fns){
+    try{ const v = await readContract({ address: CONTRACT, abi: ABI, functionName: f }); return BigInt(v); }
+    catch{}
+  }
+  return 0n; // 不明なら0
+}
+
+document.getElementById('mint').onclick = async () => {
+  try{
+    await ensurePolygon();
+    const qty = BigInt(Math.max(1, Number(document.getElementById('q').value|0)));
+    const value = (await getUnitPrice()) * qty;
+
+    const candidates = [
+      { fn:'mint', args:[qty] },
+      { fn:'publicMint', args:[qty] },
+      { fn:'purchase', args:[qty] },
+      { fn:'mint', args:[] }
+    ];
+
+    for (const c of candidates){
+      try{
+        await simulateContract({ address: CONTRACT, abi: ABI, functionName: c.fn, args: c.args, value });
+        const tx = await writeContract({ address: CONTRACT, abi: ABI, functionName: c.fn, args: c.args, value });
+        out('tx: ' + tx);
+        return;
+      }catch{}
+    }
+    out('対応するミント関数が見つからない（OpenSea共有コントラクト等の可能性）');
+  }catch(e){ out('error: ' + (e?.message || e)); }
+};
+</script>

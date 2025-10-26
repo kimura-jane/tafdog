@@ -1,0 +1,14 @@
+<!doctype html><meta charset="utf-8"><title>Wallet & API test</title>
+<h1>Wallet & API test</h1>
+<button id="connect">Connect Wallet</button> | <a href="/mint.html">Mintへ</a>
+<pre id="out"></pre>
+<script type="module">
+const out = (m)=>document.getElementById('out').textContent=m;
+document.getElementById('connect').onclick = async () => {
+  if(!window.ethereum){ out('MetaMask未検出'); return; }
+  const [addr] = await window.ethereum.request({ method:'eth_requestAccounts' });
+  const n = await fetch('/api/nonce',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({address:addr})}).then(r=>r.json());
+  const s = await fetch('/api/sign' ,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({address:addr})}).then(r=>r.json());
+  out(`address: ${addr}\nnonce: ${n.nonce}\nsignature: ${s.signature}`);
+};
+</script>
