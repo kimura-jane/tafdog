@@ -1,3 +1,83 @@
 <!doctype html><meta charset="utf-8"><title>TAF DOG</title>
 <h1>TAF DOG</h1>
-<p><a href="/mint.html">Mintページへ</a></p>
+<nav>
+  <a href="/mint.html">Mintページへ</a>
+  <a href="https://opensea.io/ja/collection/taf-dog" target="_blank" rel="noopener">OpenSea</a>
+  <button id="connect">Connect</button>
+</nav>
+<pre id="info">loading…</pre>
+
+<script type="module">
+import { createPublicClient, createWalletClient, custom, parseAbi, formatEther } from 'https://esm.sh/viem@2?bundle';
+import { polygon } from 'https://esm.sh/viem/chains?bundle';
+
+const NFT = '0xd0163c60bd67bbf0e3c1bdabae50277dffb5583b';
+const SEADROP = '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5';
+
+const NFT_ABI = parseAbi([
+  'function name() view returns (string)',
+  'function symbol() view returns (string)',
+  'function totalSupply() view returns (uint256)'
+]);
+const SD_ABI = parseAbi([
+  'function getPublicDrop(address nft) view returns (tuple(uint80 mintPrice,uint48 startTime,uint48 endTime,uint16 maxTotalMintableByWallet,uint16 feeBps,bool restrictFeeRecipients))'
+]);
+
+const transport = window.ethereum ? custom(window.ethereum) : undefined;
+const pub = createPublicClient({ chain: polygon, transport: transport ?? undefined });
+const wal = transport ? createWalletClient({ chain: polygon, transport }) : null;
+
+const info = m => document.getElementById('info').textContent = m;
+
+function tsToLocal(ts){
+  if (!ts || ts==='0') return '-';
+  const d = new Date(Number(ts) * 1000);
+  return isNaN(d.getTime()) ? '-' : d.toLocaleString();
+}
+
+async function load(){
+  try{
+    const [name, symbol, total] = await Promise.all([
+      pub.readContract({ address: NFT, abi: NFT_ABI, functionName:'name' }),
+      pub.readContract({ address: NFT, abi: NFT_ABI, functionName:'symbol' }),
+      pub.readContract({ address: NFT, abi: NFT_ABI, functionName:'totalSupply' }).catch(()=>null),
+    ]);
+    let price='-', start='-', end='-', max='-', fee='-', restrict='-';
+    try{
+      const d = await pub.readContract({ address: SEADROP, abi: SD_ABI, functionName:'getPublicDrop', args:[NFT] });
+      const wei = BigInt(d.mintPrice ?? 0);
+      price = `${wei} wei (${formatEther(wei)} MATIC)`;
+      start = tsToLocal(d.startTime);
+      end = tsToLocal(d.endTime);
+      max = String(d.maxTotalMintableByWallet ?? '-');
+      fee = String(d.feeBps ?? '-');
+      restrict = String(Boolean(d.restrictFeeRecipients));
+    }catch{}
+    info(
+`name: ${name}
+symbol: ${symbol}
+totalSupply: ${total ?? '-'}
+price: ${price}
+start: ${start}
+end:   ${end}
+max/wallet: ${max}
+feeBps: ${fee}
+restrictFeeRecipients: ${restrict}`
+    );
+  }catch(e){ info('error: ' + (e?.message || e)); }
+}
+
+document.getElementById('connect').onclick = async () => {
+  if (!wal || !window.ethereum){ info('MetaMask未検出'); return; }
+  await window.ethereum.request({ method:'eth_requestAccounts' });
+  info((document.getElementById('info').textContent || '') + '\nwallet: connected');
+};
+
+load();
+</script>
+<style>
+body{font-family:system-ui,Arial,sans-serif;margin:20px}
+nav{display:flex;gap:12px;align-items:center;margin-bottom:12px}
+pre{white-space:pre-wrap;background:#f6f6f6;padding:12px;border:1px solid #ddd}
+button{cursor:pointer}
+</style>
