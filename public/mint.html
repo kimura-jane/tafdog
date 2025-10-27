@@ -90,3 +90,8 @@ document.getElementById('mint').onclick = async ()=>{
   }catch(e){ out('error: ' + (e?.message || e)); }
 };
 </script>
+// SD_ABI に追加
+"function isFeeRecipientAllowed(address nft,address feeRecipient) view returns (bool)",
+// infoボタン内で追記
+const allowed = await sd.isFeeRecipientAllowed(NFT, FEE_RECIPIENT).catch(()=>false);
+out(... + `\nallowed(FEE_RECIPIENT): ${allowed}`);
