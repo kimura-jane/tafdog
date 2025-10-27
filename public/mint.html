@@ -20,6 +20,7 @@ const NFT_ABI = [
 ];
 const SD_ABI = [
   "function getPublicDrop(address nft) view returns (uint80 mintPrice,uint48 startTime,uint48 endTime,uint16 maxTotalMintableByWallet,uint16 feeBps,bool restrictFeeRecipients)",
+  "function isFeeRecipientAllowed(address nft,address feeRecipient) view returns (bool)",
   "function mintPublic(address nft,address feeRecipient,uint256 quantity) payable"
 ];
 
@@ -50,24 +51,30 @@ document.getElementById('info').onclick = async ()=>{
     const p = provider ?? new ethers.providers.JsonRpcProvider("https://polygon-rpc.com");
     const nft = new ethers.Contract(NFT, NFT_ABI, p);
     const sd  = new ethers.Contract(SEADROP, SD_ABI, p);
+
     const [name, symbol] = await Promise.all([nft.name(), nft.symbol()]);
     let total = '-'; try{ total = (await nft.totalSupply()).toString(); }catch{}
-    let price='0', start='0', end='0', max='0', fee='0', restrict='false';
+
+    let price='0', start='0', end='0', max='0', fee='0', restrict='false', allowed='false';
     try{
       const d = await sd.getPublicDrop(NFT);
-      price = d.mintPrice.toString();
-      start = d.startTime.toString();
-      end   = d.endTime.toString();
-      max   = d.maxTotalMintableByWallet.toString();
-      fee   = d.feeBps.toString();
-      restrict = String(d.restrictFeeRecipients);
+      price   = d.mintPrice.toString();
+      start   = d.startTime.toString();
+      end     = d.endTime.toString();
+      max     = d.maxTotalMintableByWallet.toString();
+      fee     = d.feeBps.toString();
+      restrict= String(d.restrictFeeRecipients);
+      allowed = String(await sd.isFeeRecipientAllowed(NFT, FEE_RECIPIENT));
     }catch{}
+
     out(`name: ${name}
 symbol: ${symbol}
 totalSupply: ${total}
 price(wei): ${price}
 start: ${start} end: ${end}
-max/wallet: ${max} feeBps: ${fee} restrictFeeRecipients: ${restrict}`);
+max/wallet: ${max} feeBps: ${fee}
+restrictFeeRecipients: ${restrict}
+allowed(FEE_RECIPIENT): ${allowed}`);
   }catch(e){ out('読取失敗: ' + (e?.message || e)); }
 };
 
@@ -76,8 +83,10 @@ document.getElementById('mint').onclick = async ()=>{
     if(!window.ethereum){ out('MetaMask未検出'); return; }
     if(!signer){ document.getElementById('connect').click(); return; }
     await ensurePolygon();
+
     const qty = Math.max(1, Number(document.getElementById('q').value|0));
     const sd = new ethers.Contract(SEADROP, SD_ABI, signer);
+
     // 価格取得。未設定なら0
     let unit = ethers.BigNumber.from(0);
     try{
@@ -85,13 +94,9 @@ document.getElementById('mint').onclick = async ()=>{
       unit = d.mintPrice;
     }catch{}
     const value = unit.mul(qty);
+
     const tx = await sd.mintPublic(NFT, FEE_RECIPIENT, qty, { value });
     out('tx: ' + tx.hash);
   }catch(e){ out('error: ' + (e?.message || e)); }
 };
 </script>
-// SD_ABI に追加
-"function isFeeRecipientAllowed(address nft,address feeRecipient) view returns (bool)",
-// infoボタン内で追記
-const allowed = await sd.isFeeRecipientAllowed(NFT, FEE_RECIPIENT).catch(()=>false);
-out(... + `\nallowed(FEE_RECIPIENT): ${allowed}`);
