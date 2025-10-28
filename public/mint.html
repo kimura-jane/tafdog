@@ -95,26 +95,8 @@ document.getElementById('mint').onclick = async ()=>{
     }catch{}
     const value = unit.mul(qty);
 
-    // ガスリミットとガス価格を手動設定
-    const gasLimit = 500000;  // 高めに設定
-    const gasPrice = ethers.utils.parseUnits('50', 'gwei'); // Polygonの場合は高めに
-
-    out('ミント実行中...');
-    
-    const tx = await sd.mintPublic(NFT, FEE_RECIPIENT, qty, { 
-      value,
-      gasLimit,
-      gasPrice
-    });
-    
-    out('tx送信完了: ' + tx.hash + '\n確認中...');
-    
-    const receipt = await tx.wait();
-    out('ミント成功! tx: ' + tx.hash + '\nblock: ' + receipt.blockNumber);
-    
-  }catch(e){ 
-    out('error: ' + (e?.message || e));
-    console.error('Mint error details:', e);
-  }
+    const tx = await sd.mintPublic(NFT, FEE_RECIPIENT, qty, { value });
+    out('tx: ' + tx.hash);
+  }catch(e){ out('error: ' + (e?.message || e)); }
 };
 </script>
