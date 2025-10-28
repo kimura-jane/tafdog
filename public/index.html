@@ -1,125 +1,123 @@
 <!doctype html>
-<meta charset="utf-8">
-<title>TAF DOG Mint</title>
-<h1>TAF DOG Mint</h1>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>TAF DOG Mint</title>
+  <style>
+    body{font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif;margin:24px;line-height:1.6}
+    h1{font-size:28px;margin:0 0 16px}
+    button,input{font-size:16px;padding:6px 10px;margin:4px 6px 10px 0}
+    .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    pre{white-space:pre-wrap;background:#f6f6f6;padding:10px;border:1px solid #ddd;max-width:100%}
+  </style>
+</head>
+<body>
+  <h1>TAF DOG Mint</h1>
 
-<div>
-  <button id="btnConnect">Connect</button>
-  <button id="btnInfo">コントラクト確認</button>
-  数量 <input id="qty" type="number" value="1" min="1" style="width:4em">
-  <button id="btnMint">Mint</button>
-</div>
+  <div class="row">
+    <button id="btnConnect">Connect</button>
+    <button id="btnInfo">コントラクト確認</button>
+    <label>数量 <input id="qty" type="number" min="1" value="1" style="width:70px"></label>
+    <button id="btnMint">Mint</button>
+  </div>
 
-<pre id="log"></pre>
+  <pre id="out">ready</pre>
 
-<script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
-<script>
-const NFT = "0xd0163c60bd67bbf0e3c1bdabae50277dffb5583b";
-const SEADROP = "0x00005EA00Ac477B1030CE78506496e8C2dE24bf5";
-const FEE_RECIPIENT = "0x8242dae5c6ff90b03d15c54cad95c3ed97ac0571"; // あなた
+  <script type="module">
+    import { ethers } from "https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.esm.min.js";
 
-// 必要最小 ABI（NFT と SeaDrop）
-const NFT_ABI = [
-  "function name() view returns(string)",
-  "function symbol() view returns(string)",
-  "function totalSupply() view returns(uint256)"
-];
-const SD_ABI = [
-  // 公開ステージ取得
-  "function getPublicDrop(address nft) view returns(uint80 mintPrice,uint48 startTime,uint48 endTime,uint16 maxTotalMintableByWallet,uint16 feeBps,bool restrictFeeRecipients)",
-  // 受取先が許可済みか
-  "function isFeeRecipientAllowed(address nft,address feeRecipient) view returns(bool)",
-  // ミント統計（参考）
-  "function getMintStats(address nft,address minter) view returns(uint256,uint256,uint256,uint256)",
-  // 公開ミント（OpenSea SeaDrop v1 系）
-  "function mintPublic(address nft,address feeRecipient,address minter,uint256 quantity) payable"
-];
+    // --- 固定値（あなたの環境） ---
+    const NFT  = "0xd0163c60bd67bbf0e3c1bdabae50277dffb5583b"; // TAF DOG (Polygon)
+    const SD   = "0x00005EA00Ac477B1030CE78506496e8C2dE24bf5";   // SeaDrop (Polygon)
+    const FEE  = "0x8242dAe5C6fF90b03d15C54Cad95C3ed97AC0571";   // 受取先ウォレット
 
-let provider, signer, me;
-const log = (...a)=>document.getElementById('log').textContent += a.join(' ')+"\n";
+    // 読み取り用RPC と 署名用Signer
+    const rpc = new ethers.providers.JsonRpcProvider("https://polygon-rpc.com");
+    const web3 = new ethers.providers.Web3Provider(window.ethereum, "any");
 
-async function connect() {
-  if (!window.ethereum) { log("MetaMask未検出"); return; }
-  provider = new ethers.providers.Web3Provider(window.ethereum);
-  await provider.send("eth_requestAccounts", []);
-  signer = provider.getSigner();
-  me = await signer.getAddress();
-  const { chainId } = await provider.getNetwork();
-  if (chainId !== 137) log(`警告: 現在のChainId=${chainId}。Polygon Mainnet(137)に切替推奨`);
-  log("address:", me);
-}
+    // 最小ABI（必要分のみ）
+    const NFT_ABI = [
+      "function name() view returns (string)",
+      "function symbol() view returns (string)",
+      "function totalSupply() view returns (uint256)",
+      "function maxSupply() view returns (uint256)",
+      "function getMintStats() view returns (uint80,uint80,uint32,uint32,uint32,uint32,uint8,uint16)" // あれば取得
+    ];
+    const SD_ABI = [
+      "function isFeeRecipientAllowed(address nft,address feeRecipient) view returns (bool)",
+      "function mintPublic(address nft,address minter,uint256 quantity) payable",
+      "function mintPublic(address nft,address feeRecipient,address minter,uint256 quantity) payable"
+    ];
 
-async function showInfo() {
-  try {
-    const nft = new ethers.Contract(NFT, NFT_ABI, provider);
-    const sd  = new ethers.Contract(SEADROP, SD_ABI, provider);
-    const [name, symbol, ts] = await Promise.all([
-      nft.name(), nft.symbol(), nft.totalSupply()
-    ]);
-    const pd = await sd.getPublicDrop(NFT);
-    const allowed = await sd.isFeeRecipientAllowed(NFT, FEE_RECIPIENT);
+    const nftRead = new ethers.Contract(NFT, NFT_ABI, rpc);
+    const sdRead  = new ethers.Contract(SD,  SD_ABI,  rpc);
+    let signer, sdWrite;
 
-    log(
-      `name: ${name}\nsymbol: ${symbol}\ntotalSupply: ${ts}`,
-      `\nprice(wei): ${pd.mintPrice}`,
-      `\nstart: ${pd.startTime.toString()} end: ${pd.endTime.toString()}`,
-      `\nmax/wallet: ${pd.maxTotalMintableByWallet} feeBps: ${pd.feeBps}`,
-      `\nrestrictFeeRecipients: ${pd.restrictFeeRecipients}`,
-      `\nallowed(FEE_RECIPIENT): ${allowed}`
-    );
-  } catch (e) {
-    log("info error:", e.message || e);
-  }
-}
+    const out = (m) => document.getElementById("out").textContent =
+      (document.getElementById("out").textContent + "\n" + m).trim();
 
-async function mint() {
-  try {
-    if (!signer) await connect();
-    const sd = new ethers.Contract(SEADROP, SD_ABI, signer);
-    const qty = parseInt(document.getElementById('qty').value || "1", 10);
-
-    // 事前チェック
-    const pd = await sd.getPublicDrop(NFT);
-    const now = Math.floor(Date.now()/1000);
-    if (now < pd.startTime || now >= pd.endTime) {
-      log("error: ミント時間外"); return;
-    }
-    if (pd.restrictFeeRecipients) {
-      const ok = await sd.isFeeRecipientAllowed(NFT, FEE_RECIPIENT);
-      if (!ok) { log("error: FEE_RECIPIENTが未許可"); return; }
+    // Polygonへ強制
+    async function ensurePolygon() {
+      await web3.send("eth_requestAccounts", []);
+      try { await web3.send("wallet_switchEthereumChain", [{ chainId: "0x89" }]); }
+      catch(e) { throw new Error("MetaMaskをPolygon(0x89)へ切替えてから再実行"); }
+      signer = web3.getSigner();
+      sdWrite = new ethers.Contract(SD, SD_ABI, signer);
     }
 
-    // 見積もり→送信。見積り不可時は手動gasLimitで送信
-    const feeData = await signer.provider.getFeeData();
-    let tx;
-    try {
-      const gas = await sd.estimateGas.mintPublic(NFT, FEE_RECIPIENT, me, qty, { value: pd.mintPrice.mul(qty) });
-      tx = await sd.mintPublic(NFT, FEE_RECIPIENT, me, qty, {
-        value: pd.mintPrice.mul(qty),
-        gasLimit: gas
-      });
-    } catch (estErr) {
-      // revert系はここで終了
-      log("estimate fail:", estErr.message || estErr);
-      if (String(estErr).includes("revert")) return;
-      // 推定不可のみ手動
-      tx = await sd.mintPublic(NFT, FEE_RECIPIENT, me, qty, {
-        value: pd.mintPrice.mul(qty),
-        gasLimit: ethers.BigNumber.from(500000),
-        maxFeePerGas: feeData.maxFeePerGas,
-        maxPriorityFeePerGas: feeData.maxPriorityFeePerGas
-      });
-    }
-    log("tx sent:", tx.hash);
-    const rc = await tx.wait();
-    log("minted. block:", rc.blockNumber);
-  } catch (e) {
-    log("mint error:", e.message || e);
-  }
-}
+    // Connect
+    document.getElementById("btnConnect").onclick = async () => {
+      try {
+        await ensurePolygon();
+        const addr = await signer.getAddress();
+        out("connected: " + addr);
+      } catch (e) { out(e.message ?? String(e)); }
+    };
 
-document.getElementById('btnConnect').onclick = connect;
-document.getElementById('btnInfo').onclick = showInfo;
-document.getElementById('btnMint').onclick = mint;
-log("loaded");
-</script>
+    // 情報表示
+    document.getElementById("btnInfo").onclick = async () => {
+      try {
+        const [name, symbol] = await Promise.all([nftRead.name().catch(()=>"?"), nftRead.symbol().catch(()=>"?")]);
+        const [ts, ms] = await Promise.all([nftRead.totalSupply().catch(()=>null), nftRead.maxSupply().catch(()=>null)]);
+        let statsTxt = "";
+        try {
+          const s = await nftRead.getMintStats();
+          statsTxt = `\ngetMintStats -> start:${s[2]} end:${s[3]} maxPerWallet:${s[6]} feeBps:${s[7]}`;
+        } catch {}
+        const allowed = await sdRead.isFeeRecipientAllowed(NFT, FEE).catch(()=>false);
+        out(`name: ${name} symbol: ${symbol}\n` +
+            (ts!==null?`totalSupply: ${ts}\n`:"") +
+            (ms!==null?`maxSupply: ${ms}\n`:"") +
+            `allowed(FEE_RECIPIENT): ${allowed}${statsTxt}`);
+      } catch (e) { out(e.message ?? String(e)); }
+    };
+
+    // ミント
+    document.getElementById("btnMint").onclick = async () => {
+      try {
+        await ensurePolygon();
+        const qty = Math.max(1, parseInt(document.getElementById("qty").value || "1", 10));
+        const me = await signer.getAddress();
+
+        // まず3引数版を試す → 失敗したら4引数版
+        try {
+          const tx = await sdWrite["mintPublic(address,address,uint256)"](NFT, me, qty, { gasLimit: 500000 });
+          out("tx sent (3-args): " + tx.hash);
+          await tx.wait();
+          out("mint success");
+        } catch {
+          const tx2 = await sdWrite["mintPublic(address,address,address,uint256)"](NFT, FEE, me, qty, { gasLimit: 700000 });
+          out("tx sent (4-args): " + tx2.hash);
+          await tx2.wait();
+          out("mint success");
+        }
+      } catch (e) {
+        out((e?.error?.message) || e.message || String(e));
+      }
+    };
+
+    out("loaded");
+  </script>
+</body>
+</html>
