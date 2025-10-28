@@ -1,102 +1,49 @@
-<!doctype html><meta charset="utf-8"><title>TAF DOG Mint</title>
-<h1>TAF DOG Mint</h1>
-<p><a href="/">← 戻る</a> | <a href="/test.html">test</a></p>
-<label>数量 <input id="q" type="number" value="1" min="1" max="5"></label>
-<button id="connect">Connect</button>
-<button id="info">コントラクト確認</button>
-<button id="mint">Mint</button>
-<pre id="out">loaded</pre>
+<script type="module">
+import {ethers} from "https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.esm.min.js";
 
-<script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
-<script>
-const NFT = '0xd0163c60bd67bbf0e3c1bdabae50277dffb5583b';
-const SEADROP = '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5';
-const FEE_RECIPIENT = '0x8242dae5c6ff90b03d15c54cad95c3ed97ac0571';
+const NFT = "0xd0163c60bd67bbf0e3c1bdabae50277dffb5583b";
+const SD  = "0x00005EA00Ac477B1030CE78506496e8C2dE24bf5"; // SeaDrop(PoS)
+const FEE = "0x8242dAe5C6fF90b03d15C54Cad95C3ed97AC0571"; // あなたの受取先
 
+// 1) Polygonへ強制
+const web3 = new ethers.providers.Web3Provider(window.ethereum, "any");
+await web3.send("eth_requestAccounts", []);
+await web3.send("wallet_switchEthereumChain", [{ chainId: "0x89" }]);
+const signer = web3.getSigner();
+
+// 2) 読み取りは公共RPC
+const rpc = new ethers.providers.JsonRpcProvider("https://polygon-rpc.com");
+
+// 3) 正しいABIでインスタンス
 const NFT_ABI = [
-  "function name() view returns (string)",
-  "function symbol() view returns (string)",
-  "function totalSupply() view returns (uint256)"
+  "function name() view returns(string)",
+  "function symbol() view returns(string)",
+  "function getMintStats() view returns (uint80,uint80,uint32,uint32,uint32,uint32,uint8,uint16)"
 ];
 const SD_ABI = [
-  "function getPublicDrop(address nft) view returns (uint80 mintPrice,uint48 startTime,uint48 endTime,uint16 maxTotalMintableByWallet,uint16 feeBps,bool restrictFeeRecipients)",
-  "function isFeeRecipientAllowed(address nft,address feeRecipient) view returns (bool)",
-  "function mintPublic(address nft,address feeRecipient,uint256 quantity) payable"
+  "function isFeeRecipientAllowed(address,address) view returns (bool)",
+  "function mintPublic(address nft,address feeRecipient,address minter,uint256 quantity) payable"
 ];
 
-const out = m => document.getElementById('out').textContent = String(m);
+const nft = new ethers.Contract(NFT, NFT_ABI, rpc);
+const sdRead = new ethers.Contract(SD, SD_ABI, rpc);      // read専用
+const sdWrite = new ethers.Contract(SD, SD_ABI, signer);  // write専用
 
-let provider, signer, account;
+// 表示
+const stats = await nft.getMintStats();
+const allowed = await sdRead.isFeeRecipientAllowed(NFT, FEE)
+  .catch(()=>false);
+document.getElementById("info").textContent =
+  `allowed(FEE_RECIPIENT): ${allowed}`;
 
-async function ensurePolygon(){
-  if (!window.ethereum) return;
-  const id = await window.ethereum.request({ method:'eth_chainId' });
-  if (id !== '0x89'){
-    await window.ethereum.request({ method:'wallet_switchEthereumChain', params:[{ chainId:'0x89' }]});
+// ミント
+document.getElementById("btnMint").onclick = async () => {
+  try {
+    const qty = 1;
+    // 必要なら gasLimit を手動指定
+    await sdWrite.mintPublic(NFT, FEE, await signer.getAddress(), qty, { gasLimit: 500000 });
+  } catch (e) {
+    document.getElementById("log").textContent = e.message ?? String(e);
   }
-}
-
-document.getElementById('connect').onclick = async ()=>{
-  if(!window.ethereum){ out('MetaMask未検出'); return; }
-  provider = new ethers.providers.Web3Provider(window.ethereum, "any");
-  await provider.send("eth_requestAccounts", []);
-  signer = provider.getSigner();
-  account = await signer.getAddress();
-  await ensurePolygon();
-  out('connected: ' + account);
-};
-
-document.getElementById('info').onclick = async ()=>{
-  try{
-    const p = provider ?? new ethers.providers.JsonRpcProvider("https://polygon-rpc.com");
-    const nft = new ethers.Contract(NFT, NFT_ABI, p);
-    const sd  = new ethers.Contract(SEADROP, SD_ABI, p);
-
-    const [name, symbol] = await Promise.all([nft.name(), nft.symbol()]);
-    let total = '-'; try{ total = (await nft.totalSupply()).toString(); }catch{}
-
-    let price='0', start='0', end='0', max='0', fee='0', restrict='false', allowed='false';
-    try{
-      const d = await sd.getPublicDrop(NFT);
-      price   = d.mintPrice.toString();
-      start   = d.startTime.toString();
-      end     = d.endTime.toString();
-      max     = d.maxTotalMintableByWallet.toString();
-      fee     = d.feeBps.toString();
-      restrict= String(d.restrictFeeRecipients);
-      allowed = String(await sd.isFeeRecipientAllowed(NFT, FEE_RECIPIENT));
-    }catch{}
-
-    out(`name: ${name}
-symbol: ${symbol}
-totalSupply: ${total}
-price(wei): ${price}
-start: ${start} end: ${end}
-max/wallet: ${max} feeBps: ${fee}
-restrictFeeRecipients: ${restrict}
-allowed(FEE_RECIPIENT): ${allowed}`);
-  }catch(e){ out('読取失敗: ' + (e?.message || e)); }
-};
-
-document.getElementById('mint').onclick = async ()=>{
-  try{
-    if(!window.ethereum){ out('MetaMask未検出'); return; }
-    if(!signer){ document.getElementById('connect').click(); return; }
-    await ensurePolygon();
-
-    const qty = Math.max(1, Number(document.getElementById('q').value|0));
-    const sd = new ethers.Contract(SEADROP, SD_ABI, signer);
-
-    // 価格取得。未設定なら0
-    let unit = ethers.BigNumber.from(0);
-    try{
-      const d = await sd.getPublicDrop(NFT);
-      unit = d.mintPrice;
-    }catch{}
-    const value = unit.mul(qty);
-
-    const tx = await sd.mintPublic(NFT, FEE_RECIPIENT, qty, { value });
-    out('tx: ' + tx.hash);
-  }catch(e){ out('error: ' + (e?.message || e)); }
 };
 </script>
