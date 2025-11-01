@@ -1,8 +1,14 @@
-export interface Env { NONCE_KV: KVNamespace; }
-export const onRequestPost: PagesFunction<Env> = async ({ env, request }) => {
-  const { address } = await request.json<any>().catch(()=>({}));
-  if (!address) return new Response('bad request',{status:400});
-  const nonce = crypto.randomUUID();
-  await env.NONCE_KV.put(`nonce:${address.toLowerCase()}`, nonce, { expirationTtl: 300 });
-  return Response.json({ nonce });
-};
+// Cloudflare Pages Functions: GET /api/nonce
+export async function onRequestGet() {
+  // 32byte ランダム値を hex 文字列で返す
+  const buf = new Uint8Array(32);
+  crypto.getRandomValues(buf);
+  const nonce = [...buf].map(b => b.toString(16).padStart(2, "0")).join("");
+
+  return new Response(JSON.stringify({ nonce }), {
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store"
+    }
+  });
+}
